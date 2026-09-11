@@ -1,0 +1,20 @@
+project_id = "dnucrisnkcrzalxlskuq"
+
+# Every function here is called by an external system (HubSpot's webhook,
+# EmailBison's webhook, or a human running a one-time setup/onboarding
+# script) — never by a Supabase-authenticated end-user session, so none of
+# them verify a Supabase JWT. Where a caller can be authenticated, it's via
+# that system's own mechanism instead (e.g. HubSpot's X-HubSpot-Signature-v3
+# HMAC), not Supabase auth.
+
+[functions.hubspot-oauth-callback]
+verify_jwt = false
+
+[functions.hubspot-custom-channel-webhook]
+verify_jwt = false
+
+[functions.emailbison-reply-webhook]
+verify_jwt = false
+
+[functions.onboard-client]
+verify_jwt = false
