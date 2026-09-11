@@ -2,10 +2,12 @@
 // be run manually (or from a future admin UI) by whoever's setting up a
 // new client — not called by HubSpot or EmailBison themselves.
 //
-//   1. ?action=create&name=<name>&slug=<slug>&emailbisonApiKey=<key>&emailbisonBaseUrl=<url>
-//      Creates the client + stores their EmailBison credentials. Returns
-//      clientId and an installUrl for them (or you, on their behalf) to
-//      open and authorize.
+//   1. ?action=create&name=<name>&slug=<slug>&emailbisonApiKey=<key>&emailbisonBaseUrl=<url>&emailbisonAccountLabel=<label>
+//      Creates the client + stores their EmailBison credentials.
+//      emailbisonAccountLabel is optional (defaults to name) — a readable
+//      tag for which EmailBison workspace this is, since the API key
+//      itself isn't. Returns clientId and an installUrl for them (or you,
+//      on their behalf) to open and authorize.
 //
 //   2. ?action=list-inboxes&client=<clientId>
 //      Once the HubSpot OAuth install (step 1's installUrl) has completed,
@@ -32,6 +34,7 @@ Deno.serve(async (req) => {
       const slug = url.searchParams.get("slug");
       const emailbisonApiKey = url.searchParams.get("emailbisonApiKey");
       const emailbisonBaseUrl = url.searchParams.get("emailbisonBaseUrl");
+      const emailbisonAccountLabel = url.searchParams.get("emailbisonAccountLabel") ?? name;
       if (!name || !slug || !emailbisonApiKey || !emailbisonBaseUrl) {
         return json({ error: "Required: name, slug, emailbisonApiKey, emailbisonBaseUrl" }, 400);
       }
@@ -47,6 +50,7 @@ Deno.serve(async (req) => {
         client_id: client.id,
         api_key: emailbisonApiKey,
         base_url: emailbisonBaseUrl,
+        account_label: emailbisonAccountLabel,
       });
       if (credError) return json({ error: `Failed to store EmailBison credentials: ${credError.message}` }, 500);
 
@@ -78,7 +82,9 @@ Deno.serve(async (req) => {
       }
       const channelAccountId = await createChannelAccount(clientId, inboxId, deliveryIdentifier);
 
-      const { data: client } = await admin.from("clients").select("slug").eq("id", clientId).single();
+      const { data: client } = await admin.from("clients").select("name, slug").eq("id", clientId).single();
+      const { data: install } = await admin.from("hubspot_installs").select("portal_id, hub_domain").eq("client_id", clientId).single();
+      const { data: emailbison } = await admin.from("emailbison_credentials").select("account_label").eq("client_id", clientId).single();
       // SUPABASE_URL rather than deriving from req.url — Supabase's edge
       // runtime rewrites the request's own scheme/host internally (the
       // same issue that broke the OAuth redirect_uri in the single-tenant
@@ -88,6 +94,11 @@ Deno.serve(async (req) => {
         step: "connect",
         channelAccountId,
         onboardingComplete: true,
+        summary: {
+          client: client?.name,
+          hubspotPortal: install ? `${install.hub_domain ?? "unknown domain"} (${install.portal_id})` : undefined,
+          emailBisonAccount: emailbison?.account_label,
+        },
         emailBisonWebhookUrlToRegister: client && projectUrl
           ? `${projectUrl}/functions/v1/emailbison-reply-webhook?client=${client.slug}`
           : "(lookup failed — build the URL manually as <project-url>/functions/v1/emailbison-reply-webhook?client=<slug>)",

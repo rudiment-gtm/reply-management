@@ -11,6 +11,7 @@ const TOKEN_URL = "https://api.hubapi.com/oauth/v1/token";
 export interface HubSpotInstall {
   client_id: string;
   portal_id: number;
+  hub_domain: string | null;
   access_token: string;
   refresh_token: string;
   expires_at: string;
@@ -54,19 +55,20 @@ export async function completeOAuthInstall(clientId: string, code: string): Prom
     code,
   });
   const tokens = await requestToken(body);
-  const portalId = await fetchPortalId(tokens.access_token);
+  const { hubId, hubDomain } = await fetchPortalInfo(tokens.access_token);
 
   const admin = adminClient();
   const { error } = await admin.from("hubspot_installs").upsert({
     client_id: clientId,
-    portal_id: portalId,
+    portal_id: hubId,
+    hub_domain: hubDomain,
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
   }, { onConflict: "client_id" });
   if (error) throw new Error(`Failed to store HubSpot OAuth tokens: ${error.message}`);
 
-  return { portalId };
+  return { portalId: hubId };
 }
 
 // Returns a valid (non-expired) access token for the given client,
@@ -205,10 +207,10 @@ async function requestToken(body: URLSearchParams): Promise<{ access_token: stri
   return data;
 }
 
-async function fetchPortalId(accessToken: string): Promise<number> {
+async function fetchPortalInfo(accessToken: string): Promise<{ hubId: number; hubDomain: string | null }> {
   const res = await fetch(`https://api.hubapi.com/oauth/v1/access-tokens/${accessToken}`);
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error(`HubSpot token-info request failed (${res.status}): ${text}`);
-  return data.hub_id;
+  return { hubId: data.hub_id, hubDomain: data.hub_domain ?? null };
 }
