@@ -62,7 +62,8 @@ Deno.serve(async (req) => {
 
   const replyId = reply?.id as number | string | undefined;
   const leadEmail = lead?.email as string | undefined;
-  const leadName = (reply?.from_name as string | undefined) ?? [lead?.first_name, lead?.last_name].filter(Boolean).join(" ") || undefined;
+  const fullNameFromLead = [lead?.first_name, lead?.last_name].filter(Boolean).join(" ") || undefined;
+  const leadName = (reply?.from_name as string | undefined) ?? fullNameFromLead;
   const messageText = reply?.text_body as string | undefined;
 
   if (!replyId || !leadEmail || !messageText) {
