@@ -44,7 +44,10 @@ Deno.serve(async (req) => {
     console.error("[hubspot-custom-channel-webhook] signature check error:", e instanceof Error ? e.message : e);
     return new Response("Signature verification not configured", { status: 500 });
   }
-  if (!verified) return new Response("Invalid signature", { status: 401 });
+  if (!verified) {
+    console.error("[hubspot-custom-channel-webhook] signature verification failed — check HUBSPOT_APP_CLIENT_SECRET matches the app's current Auth-tab value");
+    return new Response("Invalid signature", { status: 401 });
+  }
 
   let events: unknown;
   try {
