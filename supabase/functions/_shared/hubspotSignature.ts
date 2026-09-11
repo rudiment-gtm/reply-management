@@ -33,7 +33,25 @@ export async function verifyHubSpotSignature(req: Request, rawBody: string): Pro
   const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
   const expected = btoa(String.fromCharCode(...new Uint8Array(mac)));
 
-  return timingSafeEqual(expected, signature);
+  const ok = timingSafeEqual(expected, signature);
+  if (!ok) {
+    // Diagnostic-only — nothing here is secret (the raw req.url, the
+    // reconstructed requestUri, and HubSpot's own signature are all
+    // either public or attacker-visible already; the client secret itself
+    // is never logged).
+    console.error("[hubspotSignature] mismatch diagnostics:", JSON.stringify({
+      rawReqUrl: req.url,
+      urlPathname: url.pathname,
+      urlSearch: url.search,
+      reconstructedRequestUri: requestUri,
+      method: req.method,
+      bodyLength: rawBody.length,
+      timestampHeader,
+      receivedSignature: signature,
+      computedSignature: expected,
+    }));
+  }
+  return ok;
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
