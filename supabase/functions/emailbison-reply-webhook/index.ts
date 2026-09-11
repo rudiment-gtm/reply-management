@@ -1,36 +1,36 @@
-// Receives a client's EmailBison reply_received webhook and pushes the
-// real reply into their HubSpot channel account. EmailBison has no way to
-// inject a custom identifier into its own webhook payload, so each client
-// gets a distinct webhook URL to register in their own EmailBison account:
+// Receives a client's EmailBison reply_received webhook (event type
+// LEAD_REPLIED) and pushes the real reply into their HubSpot channel
+// account. EmailBison has no way to inject a custom identifier into its
+// own webhook payload, so each client gets a distinct webhook URL to
+// register in their own EmailBison account:
 //   .../emailbison-reply-webhook?client=<slug>
-// which is how this resolves which client's credentials to use.
+// which is how this resolves which client's HubSpot install to use.
 //
-// CAUTION — two guesses, both self-correcting via the returned raw
-// payload/reply object on a lookup failure: (1) which field in
-// EmailBison's webhook payload holds the reply ID (tries several
-// candidates), and (2) which fields on the full reply object (fetched via
-// getReply(), a confirmed-real endpoint) hold the lead's email/name and
-// message text (also tries several candidates) — carried over from the
-// single-tenant prototype build, still pending a real live webhook call to
-// confirm.
+// Payload shape confirmed against a real EmailBison webhook (via their
+// "send test event" feature) — no more field-name guessing:
+//   event.type                    -- "LEAD_REPLIED"
+//   data.reply.id                 -- the reply ID (-> eb-reply-{id} thread tag)
+//   data.reply.from_name          -- sender display name
+//   data.reply.text_body          -- message text (includes quoted history —
+//                                     EmailBison doesn't separate new text
+//                                     from the quoted thread, so this shows
+//                                     the full quote-included body; fine for
+//                                     now, a known limitation to revisit)
+//   data.lead.email               -- the lead's canonical email address
+//
+// The payload already carries everything needed — no extra GET
+// /replies/{id} call required (that was the previous design; it's also
+// what failed against EmailBison's synthetic test payload, since a fake
+// reply ID doesn't exist to look up).
 //
 // No signature verification on the EmailBison side yet (their webhook
-// docs are thin on this) — a known gap. The ?client= slug acts as a weak
-// identifier, not an auth boundary; treat this as trusted-network-only
-// until EmailBison's webhook signing (if any) is confirmed and added.
+// docs don't document one) — the ?client= slug is a weak identifier, not
+// an auth boundary.
 import { adminClient } from "../_shared/db.ts";
-import { getCredentials, getReply } from "../_shared/emailbison.ts";
 import { pushInboundMessage } from "../_shared/hubspot.ts";
 
-function firstDefined(obj: Record<string, unknown>, paths: string[]): unknown {
-  for (const path of paths) {
-    const value = path.split(".").reduce<unknown>((acc, key) => {
-      if (acc && typeof acc === "object") return (acc as Record<string, unknown>)[key];
-      return undefined;
-    }, obj);
-    if (value !== undefined && value !== null && value !== "") return value;
-  }
-  return undefined;
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body, null, 2), { status, headers: { "Content-Type": "application/json" } });
 }
 
 Deno.serve(async (req) => {
@@ -39,50 +39,40 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const slug = url.searchParams.get("client");
   if (!slug) {
-    return new Response(JSON.stringify({ error: "Missing ?client=<slug> on the webhook URL" }, null, 2), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return json({ error: "Missing ?client=<slug> on the webhook URL" }, 400);
   }
 
   const admin = adminClient();
   const { data: client, error: clientError } = await admin.from("clients").select("id").eq("slug", slug).maybeSingle();
   if (clientError || !client) {
-    return new Response(JSON.stringify({ error: `Unknown client slug "${slug}"`, dbError: clientError?.message }, null, 2), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
+    return json({ error: `Unknown client slug "${slug}"`, dbError: clientError?.message }, 404);
   }
 
-  const rawPayload = await req.json().catch(() => ({}));
-  const replyId = firstDefined(rawPayload, [
-    "id", "reply_id", "data.id", "data.reply_id", "data.reply.id", "reply.id",
-  ]);
+  const payload = await req.json().catch(() => ({})) as Record<string, unknown>;
 
-  if (!replyId) {
-    return new Response(JSON.stringify({ error: "Could not find a reply ID in the webhook payload", rawPayload }, null, 2), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+  const eventType = (payload.event as Record<string, unknown> | undefined)?.type;
+  if (eventType !== "LEAD_REPLIED") {
+    console.log(`[emailbison-reply-webhook] ignoring event type "${eventType}" for client ${slug}`);
+    return json({ ignored: true, eventType });
+  }
+
+  const data = payload.data as Record<string, unknown> | undefined;
+  const reply = data?.reply as Record<string, unknown> | undefined;
+  const lead = data?.lead as Record<string, unknown> | undefined;
+
+  const replyId = reply?.id as number | string | undefined;
+  const leadEmail = lead?.email as string | undefined;
+  const leadName = (reply?.from_name as string | undefined) ?? [lead?.first_name, lead?.last_name].filter(Boolean).join(" ") || undefined;
+  const messageText = reply?.text_body as string | undefined;
+
+  if (!replyId || !leadEmail || !messageText) {
+    return json({
+      error: "Payload is missing reply.id, lead.email, or reply.text_body — check the raw payload below against the expected shape",
+      payload,
+    }, 422);
   }
 
   try {
-    const creds = await getCredentials(client.id);
-    const reply = await getReply(creds, replyId as number | string);
-    const replyObj = reply as Record<string, unknown>;
-
-    const leadEmail = firstDefined(replyObj, ["lead.email", "lead_email", "from_email", "sender_email", "email"]) as string | undefined;
-    const leadName = firstDefined(replyObj, ["lead.first_name", "lead.name", "from_name", "sender_name", "name"]) as string | undefined;
-    const messageText = firstDefined(replyObj, ["text_body", "body", "message", "snippet", "text", "content"]) as string | undefined;
-
-    if (!leadEmail || !messageText) {
-      return new Response(JSON.stringify({
-        error: "Could not extract lead email or message text from the reply object — check field names below",
-        rawPayload,
-        emailBisonReply: reply,
-      }, null, 2), { status: 422, headers: { "Content-Type": "application/json" } });
-    }
-
     const hsData = await pushInboundMessage({
       clientId: client.id,
       leadEmail,
@@ -90,17 +80,10 @@ Deno.serve(async (req) => {
       text: messageText,
       integrationThreadId: `eb-reply-${replyId}`,
     });
-
-    return new Response(JSON.stringify({ ok: true, hubspotResponse: hsData }, null, 2), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return json({ ok: true, hubspotResponse: hsData });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error(`[emailbison-reply-webhook] failed for client ${slug}:`, message);
-    return new Response(JSON.stringify({ error: message, rawPayload }, null, 2), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return json({ error: message }, 500);
   }
 });
