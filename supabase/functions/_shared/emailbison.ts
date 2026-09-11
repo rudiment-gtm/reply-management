@@ -40,8 +40,11 @@ async function bisonFetch(creds: EmailBisonCredentials, path: string, init: Requ
     data = text;
   }
   if (!res.ok) {
-    const message = (data as { message?: string })?.message ?? `EmailBison API ${path} failed (${res.status})`;
-    throw new Error(message);
+    // Include the full response body (e.g. Laravel-style {message, errors:
+    // {field: [reason]}} validation payloads) rather than just the
+    // top-level message — a generic "failed (422)" hides exactly which
+    // field/value EmailBison is rejecting.
+    throw new Error(`EmailBison API ${path} failed (${res.status}): ${JSON.stringify(data)}`);
   }
   return data;
 }
