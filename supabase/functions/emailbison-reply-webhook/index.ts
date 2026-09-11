@@ -60,6 +60,15 @@ Deno.serve(async (req) => {
   const reply = data?.reply as Record<string, unknown> | undefined;
   const lead = data?.lead as Record<string, unknown> | undefined;
 
+  // Belt-and-suspenders: campaign-level settings should already stop
+  // automated replies (out-of-office autoresponders etc.) from being
+  // tracked at all, but skip here too rather than clutter a rep's HubSpot
+  // inbox if that setting is ever off for a given campaign.
+  if (reply?.automated_reply === true) {
+    console.log(`[emailbison-reply-webhook] skipping automated reply ${reply?.id} for client ${slug}`);
+    return json({ ignored: true, reason: "automated_reply" });
+  }
+
   const replyId = reply?.id as number | string | undefined;
   const leadEmail = lead?.email as string | undefined;
   const fullNameFromLead = [lead?.first_name, lead?.last_name].filter(Boolean).join(" ") || undefined;
