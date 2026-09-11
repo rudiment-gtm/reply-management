@@ -7,15 +7,17 @@ import { requireEnv } from "./db.ts";
 
 const MAX_SIGNATURE_AGE_MS = 5 * 60 * 1000;
 
-// publicRequestUri MUST be the exact path+query HubSpot actually sent the
-// request to (e.g. "/functions/v1/hubspot-custom-channel-webhook") — NOT
-// derived from req.url. Confirmed by diagnostics: Supabase's edge runtime
-// reports req.url with both the wrong scheme (http instead of https) and
-// a stripped path (missing the /functions/v1/ prefix), so HubSpot's
-// signature — computed against the real public URL — can never match a
-// signature computed against that internal one. Same root cause as the
-// OAuth redirect_uri bug fixed earlier; caller passes the known-correct
-// constant instead.
+// publicRequestUri MUST be the FULL absolute URL (scheme + host + path +
+// query) exactly matching the webhook's registered Target URL — e.g.
+// "https://dnucrisnkcrzalxlskuq.supabase.co/functions/v1/hubspot-custom-
+// channel-webhook" — confirmed against HubSpot's own SDK usage and
+// community examples; the public docs text alone is ambiguous about
+// this ("requestUri") and it is NOT just the path. Also NOT derived from
+// req.url: Supabase's edge runtime separately misreports the request's
+// own scheme and path internally, so even a path-only version built from
+// req.url would be wrong on two counts. Same root cause as the OAuth
+// redirect_uri bug fixed earlier; caller passes the known-correct full
+// URL as a constant instead.
 export async function verifyHubSpotSignature(req: Request, rawBody: string, publicRequestUri: string): Promise<boolean> {
   const clientSecret = requireEnv("HUBSPOT_APP_CLIENT_SECRET");
 

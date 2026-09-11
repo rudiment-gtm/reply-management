@@ -21,9 +21,13 @@ import { getCredentials, sendReply } from "../_shared/emailbison.ts";
 
 const THREAD_ID_PREFIX = "eb-reply-";
 // Hardcoded rather than derived from req.url — see hubspotSignature.ts:
-// Supabase's edge runtime misreports the request's own path (and scheme),
-// so this must be the fixed, known-correct public path.
-const PUBLIC_REQUEST_URI = "/functions/v1/hubspot-custom-channel-webhook";
+// Supabase's edge runtime misreports the request's own URL, AND HubSpot's
+// v3 signature source string requires the FULL absolute URL (scheme +
+// host + path) matching exactly the webhook's registered Target URL —
+// confirmed against HubSpot's own official SDK usage and community
+// examples, not just the path (an earlier fix attempt only handled the
+// path/prefix issue and still failed the actual signature comparison).
+const PUBLIC_REQUEST_URI = "https://dnucrisnkcrzalxlskuq.supabase.co/functions/v1/hubspot-custom-channel-webhook";
 
 function firstDefined(obj: Record<string, unknown>, paths: string[]): unknown {
   for (const path of paths) {
