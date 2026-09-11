@@ -7,7 +7,16 @@ import { requireEnv } from "./db.ts";
 
 const MAX_SIGNATURE_AGE_MS = 5 * 60 * 1000;
 
-export async function verifyHubSpotSignature(req: Request, rawBody: string): Promise<boolean> {
+// publicRequestUri MUST be the exact path+query HubSpot actually sent the
+// request to (e.g. "/functions/v1/hubspot-custom-channel-webhook") — NOT
+// derived from req.url. Confirmed by diagnostics: Supabase's edge runtime
+// reports req.url with both the wrong scheme (http instead of https) and
+// a stripped path (missing the /functions/v1/ prefix), so HubSpot's
+// signature — computed against the real public URL — can never match a
+// signature computed against that internal one. Same root cause as the
+// OAuth redirect_uri bug fixed earlier; caller passes the known-correct
+// constant instead.
+export async function verifyHubSpotSignature(req: Request, rawBody: string, publicRequestUri: string): Promise<boolean> {
   const clientSecret = requireEnv("HUBSPOT_APP_CLIENT_SECRET");
 
   const signature = req.headers.get("X-HubSpot-Signature-v3");
@@ -19,8 +28,7 @@ export async function verifyHubSpotSignature(req: Request, rawBody: string): Pro
     return false;
   }
 
-  const url = new URL(req.url);
-  const requestUri = decodeURIComponent(url.pathname) + url.search;
+  const requestUri = publicRequestUri;
   const message = `${req.method}${requestUri}${rawBody}${timestampHeader}`;
 
   const key = await crypto.subtle.importKey(
@@ -41,9 +49,7 @@ export async function verifyHubSpotSignature(req: Request, rawBody: string): Pro
     // is never logged).
     console.error("[hubspotSignature] mismatch diagnostics:", JSON.stringify({
       rawReqUrl: req.url,
-      urlPathname: url.pathname,
-      urlSearch: url.search,
-      reconstructedRequestUri: requestUri,
+      publicRequestUriUsed: requestUri,
       method: req.method,
       bodyLength: rawBody.length,
       timestampHeader,

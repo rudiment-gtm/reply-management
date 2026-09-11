@@ -20,6 +20,10 @@ import { getInstallByPortalId } from "../_shared/hubspot.ts";
 import { getCredentials, sendReply } from "../_shared/emailbison.ts";
 
 const THREAD_ID_PREFIX = "eb-reply-";
+// Hardcoded rather than derived from req.url — see hubspotSignature.ts:
+// Supabase's edge runtime misreports the request's own path (and scheme),
+// so this must be the fixed, known-correct public path.
+const PUBLIC_REQUEST_URI = "/functions/v1/hubspot-custom-channel-webhook";
 
 function firstDefined(obj: Record<string, unknown>, paths: string[]): unknown {
   for (const path of paths) {
@@ -39,7 +43,7 @@ Deno.serve(async (req) => {
 
   let verified: boolean;
   try {
-    verified = await verifyHubSpotSignature(req, rawBody);
+    verified = await verifyHubSpotSignature(req, rawBody, PUBLIC_REQUEST_URI);
   } catch (e) {
     console.error("[hubspot-custom-channel-webhook] signature check error:", e instanceof Error ? e.message : e);
     return new Response("Signature verification not configured", { status: 500 });
