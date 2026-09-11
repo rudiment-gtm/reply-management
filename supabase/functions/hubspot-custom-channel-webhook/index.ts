@@ -102,9 +102,16 @@ async function handleEvent(event: Record<string, unknown>) {
   }
 
   const replyId = threadId.slice(THREAD_ID_PREFIX.length);
-  const message = (event.text ?? event.message ?? event.richText) as string | undefined;
+  const candidate = event.text ?? event.message ?? event.richText;
+  const message = typeof candidate === "string" ? candidate : undefined;
   if (!message?.trim()) {
-    console.error("[hubspot-custom-channel-webhook] event missing message body:", event);
+    // Log the full raw event here specifically — this is the one field
+    // whose real name on OUTGOING_CHANNEL_MESSAGE_CREATED is still
+    // unconfirmed (text/message/richText were all guesses; richText
+    // turned out to be present but non-string, which crashed .trim()
+    // before this guard was added — check the raw event below for its
+    // actual shape).
+    console.error("[hubspot-custom-channel-webhook] event missing a usable string message body:", JSON.stringify(event));
     return;
   }
 
