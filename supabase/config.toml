@@ -22,3 +22,7 @@ verify_jwt = false
 # Test-only script (see the file header) — not part of the product.
 [functions.test-create-lead]
 verify_jwt = false
+
+# One-time fix script (see the file header) — not part of the product.
+[functions.fix-channel-webhook-url]
+verify_jwt = false
