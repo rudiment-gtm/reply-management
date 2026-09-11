@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
     await createSequenceSteps(creds, campaign.id, "Test sequence", [{
       email_subject: "Quick question",
       email_body: `Hi ${firstName},\n\nThis is a one-off test message from the Reply Management build — reply to this email to test the full loop (EmailBison -> HubSpot -> reply back through EmailBison).\n\nThanks!`,
-      wait_in_days: 0,
+      wait_in_days: 1, // EmailBison rejects 0 with a 422 — minimum is 1
       order: 1,
     }]);
 
