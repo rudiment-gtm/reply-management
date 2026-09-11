@@ -9,36 +9,26 @@
 // model with integrationThreadId formatted as `eb-reply-{emailBisonReplyId}`
 // (minted by emailbison-reply-webhook). HubSpot echoes that ID back here.
 //
-// CAUTION — two guesses, both self-correcting via the logged raw event on
-// a lookup failure: (1) which field carries the portal/hub ID (tries
-// several candidates — confirmed field name pending a real multi-portal
-// test), and (2) the message-text/thread-ID field names, carried over
-// from the single-tenant prototype build where they were already
-// confirmed against one real HubSpot Custom Channels payload.
+// Payload shape confirmed against a real event (a real reply sent from
+// HubSpot's Inbox) — no more field-name guessing:
+//   type                           -- top-level, "OUTGOING_CHANNEL_MESSAGE_CREATED"
+//   portalId                       -- top-level, string (e.g. "243842089")
+//   channelIntegrationThreadIds    -- top-level array (-> eb-reply-{id} thread tag)
+//   message.text                   -- NESTED under `message` (this was the actual
+//                                      bug: event.message is the whole message
+//                                      object, not the text string — the text is
+//                                      one level deeper)
 import { verifyHubSpotSignature } from "../_shared/hubspotSignature.ts";
 import { getInstallByPortalId } from "../_shared/hubspot.ts";
 import { getCredentials, sendReply } from "../_shared/emailbison.ts";
 
 const THREAD_ID_PREFIX = "eb-reply-";
-// Hardcoded rather than derived from req.url — see hubspotSignature.ts:
-// Supabase's edge runtime misreports the request's own URL, AND HubSpot's
-// v3 signature source string requires the FULL absolute URL (scheme +
-// host + path) matching exactly the webhook's registered Target URL —
-// confirmed against HubSpot's own official SDK usage and community
-// examples, not just the path (an earlier fix attempt only handled the
-// path/prefix issue and still failed the actual signature comparison).
+// Hardcoded rather than derived from req.url: Supabase's edge runtime
+// misreports the request's own URL, AND HubSpot's v3 signature source
+// string requires the FULL absolute URL (scheme + host + path) matching
+// exactly the webhook's registered Target URL — confirmed against
+// HubSpot's own official SDK usage and community examples.
 const PUBLIC_REQUEST_URI = "https://dnucrisnkcrzalxlskuq.supabase.co/functions/v1/hubspot-custom-channel-webhook";
-
-function firstDefined(obj: Record<string, unknown>, paths: string[]): unknown {
-  for (const path of paths) {
-    const value = path.split(".").reduce<unknown>((acc, key) => {
-      if (acc && typeof acc === "object") return (acc as Record<string, unknown>)[key];
-      return undefined;
-    }, obj);
-    if (value !== undefined && value !== null && value !== "") return value;
-  }
-  return undefined;
-}
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
@@ -76,42 +66,34 @@ Deno.serve(async (req) => {
 });
 
 async function handleEvent(event: Record<string, unknown>) {
-  const type = event.subscriptionType ?? event.type;
-  if (type !== "OUTGOING_CHANNEL_MESSAGE_CREATED") {
-    console.log("[hubspot-custom-channel-webhook] ignoring event type:", type, event);
+  if (event.type !== "OUTGOING_CHANNEL_MESSAGE_CREATED") {
+    console.log("[hubspot-custom-channel-webhook] ignoring event type:", event.type);
     return;
   }
 
-  const portalId = firstDefined(event, ["portalId", "hubId", "hub_id", "portal_id"]) as number | undefined;
+  const portalId = event.portalId as string | number | undefined;
   if (!portalId) {
-    console.error("[hubspot-custom-channel-webhook] no portal/hub ID found on event:", event);
+    console.error("[hubspot-custom-channel-webhook] no portalId on event:", JSON.stringify(event));
     return;
   }
 
   const install = await getInstallByPortalId(Number(portalId));
   if (!install) {
-    console.error(`[hubspot-custom-channel-webhook] no client found for portal ${portalId}`, event);
+    console.error(`[hubspot-custom-channel-webhook] no client found for portal ${portalId}`);
     return;
   }
 
-  const threadIds = (event.channelIntegrationThreadIds ?? event.integrationThreadIds) as string[] | undefined;
+  const threadIds = event.channelIntegrationThreadIds as string[] | undefined;
   const threadId = threadIds?.find((id) => id.startsWith(THREAD_ID_PREFIX));
   if (!threadId) {
-    console.error("[hubspot-custom-channel-webhook] no recognized integrationThreadId on event:", event);
+    console.error("[hubspot-custom-channel-webhook] no recognized integrationThreadId on event:", JSON.stringify(event));
     return;
   }
 
   const replyId = threadId.slice(THREAD_ID_PREFIX.length);
-  const candidate = event.text ?? event.message ?? event.richText;
-  const message = typeof candidate === "string" ? candidate : undefined;
+  const message = (event.message as Record<string, unknown> | undefined)?.text as string | undefined;
   if (!message?.trim()) {
-    // Log the full raw event here specifically — this is the one field
-    // whose real name on OUTGOING_CHANNEL_MESSAGE_CREATED is still
-    // unconfirmed (text/message/richText were all guesses; richText
-    // turned out to be present but non-string, which crashed .trim()
-    // before this guard was added — check the raw event below for its
-    // actual shape).
-    console.error("[hubspot-custom-channel-webhook] event missing a usable string message body:", JSON.stringify(event));
+    console.error("[hubspot-custom-channel-webhook] event missing message.text:", JSON.stringify(event));
     return;
   }
 
