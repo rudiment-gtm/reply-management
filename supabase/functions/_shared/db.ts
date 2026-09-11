@@ -9,3 +9,10 @@ export function requireEnv(name: string): string {
   if (!value) throw new Error(`${name} is not configured. Set it as a Supabase Edge Function secret.`);
   return value;
 }
+
+export async function getClientIdBySlug(slug: string): Promise<string> {
+  const admin = adminClient();
+  const { data, error } = await admin.from("clients").select("id").eq("slug", slug).maybeSingle();
+  if (error || !data) throw new Error(`Unknown client slug "${slug}": ${error?.message ?? "no row"}`);
+  return data.id;
+}

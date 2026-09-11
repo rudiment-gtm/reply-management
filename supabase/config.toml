@@ -18,3 +18,7 @@ verify_jwt = false
 
 [functions.onboard-client]
 verify_jwt = false
+
+# Test-only script (see the file header) — not part of the product.
+[functions.test-create-lead]
+verify_jwt = false

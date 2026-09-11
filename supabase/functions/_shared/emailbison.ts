@@ -70,3 +70,53 @@ export async function sendReply(creds: EmailBisonCredentials, input: SendReplyIn
     body: JSON.stringify(body),
   });
 }
+
+// ── Campaign/lead creation — used only by the test-create-lead setup
+// script, to prove the real reply_received webhook end-to-end. Ported
+// from the M5-Services prototype's _shared/emailbison.ts, parameterized
+// by client credentials like everything else here.
+export interface SequenceStepInput {
+  email_subject: string;
+  email_body: string;
+  wait_in_days: number;
+  order: number;
+}
+
+export async function createCampaign(creds: EmailBisonCredentials, name: string): Promise<{ id: number }> {
+  const res = await bisonFetch(creds, "/campaigns", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  }) as { data: { id: number } };
+  return res.data;
+}
+
+export async function createSequenceSteps(creds: EmailBisonCredentials, campaignId: number, title: string, steps: SequenceStepInput[]) {
+  const res = await bisonFetch(creds, `/campaigns/v1.1/${campaignId}/sequence-steps`, {
+    method: "POST",
+    body: JSON.stringify({ title, sequence_steps: steps }),
+  }) as { data: { id: number; sequence_steps: { id: number }[] } };
+  return res.data;
+}
+
+export interface LeadInput {
+  first_name: string;
+  last_name?: string;
+  email: string;
+  title?: string;
+  company?: string;
+}
+
+export async function createOrUpdateLeads(creds: EmailBisonCredentials, leads: LeadInput[]): Promise<{ id: number; email: string }[]> {
+  const res = await bisonFetch(creds, "/leads/create-or-update/multiple", {
+    method: "POST",
+    body: JSON.stringify({ existing_lead_behavior: "patch", leads }),
+  }) as { data: { id: number; email: string }[] };
+  return res.data;
+}
+
+export async function attachLeadsToCampaign(creds: EmailBisonCredentials, campaignId: number, leadIds: number[]) {
+  await bisonFetch(creds, `/campaigns/${campaignId}/leads/attach-leads`, {
+    method: "POST",
+    body: JSON.stringify({ lead_ids: leadIds }),
+  });
+}
